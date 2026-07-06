@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Job Agent Dashboard</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f1115;
+    color: #e6e6e6;
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .subtitle { color: #9a9a9a; font-size: 13px; margin-bottom: 20px; }
+  .filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .filters button {
+    background: #1c1f26; color: #ccc; border: 1px solid #2c2f37;
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  .filters button.active { background: #3b5bdb; color: white; border-color: #3b5bdb; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 10px 8px; color: #9a9a9a; font-weight: 500; border-bottom: 1px solid #2c2f37; }
+  td { padding: 10px 8px; border-bottom: 1px solid #1c1f26; vertical-align: middle; }
+  tr:hover { background: #14161c; }
+  .score { font-weight: 600; padding: 3px 8px; border-radius: 4px; font-size: 12px; }
+  .score-high { background: #1b4332; color: #6ee7b7; }
+  .score-mid { background: #4a3b1b; color: #fbbf24; }
+  .score-low { background: #3a1c1c; color: #f87171; }
+  .status { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+  .status-READY { background: #1b4332; color: #6ee7b7; }
+  .status-FAILED { background: #3a1c1c; color: #f87171; }
+  .status-TAILORED, .status-MATCHED, .status-APPLYING { background: #1b3a4a; color: #7dd3fc; }
+  .status-FOUND, .status-SUBMITTED { background: #2c2f37; color: #ccc; }
+  a.link { color: #7dabf8; text-decoration: none; margin-right: 10px; font-size: 12px; }
+  a.link:hover { text-decoration: underline; }
+  button.approve {
+    background: #2f9e44; color: white; border: none; padding: 5px 10px;
+    border-radius: 5px; cursor: pointer; font-size: 12px;
+  }
+  button.approve:hover { background: #37b24d; }
+  button.approve:disabled { background: #2c2f37; color: #777; cursor: not-allowed; }
+  .empty { color: #777; text-align: center; padding: 40px; }
+  .company { color: #9a9a9a; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>🤖 AI Job Agent</h1>
+  <div class="subtitle">Jobs found, evaluated, and tailored by the pipeline</div>
+
+  <div class="filters" id="filters"></div>
+  <table>
+    <thead>
+      <tr>
+        <th>Title / Company</th>
+        <th>Score</th>
+        <th>Status</th>
+        <th>Documents</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="job-rows"></tbody>
+  </table>
+  <div class="empty" id="empty-msg" style="display:none;">No jobs match this filter yet.</div>
+
+<script>
+let currentFilter = 'ALL';
+const FILTERS = ['ALL', 'READY', 'MATCHED', 'TAILORED', 'FOUND', 'FAILED', 'SUBMITTED'];
+
+function scoreClass(score) {
+  if (score === null || score === undefined) return '';
+  if (score >= 70) return 'score-high';
+  if (score >= 40) return 'score-mid';
+  return 'score-low';
+}
+
+function renderFilters() {
+  const el = document.getElementById('filters');
+  el.innerHTML = FILTERS.map(f =>
+    `<button data-f="${f}" class="${f === currentFilter ? 'active' : ''}">${f}</button>`
+  ).join('');
+  el.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentFilter = btn.dataset.f;
+      renderFilters();
+      loadJobs();
+    });
+  });
+}
+
+async function approve(jobId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Approving...';
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/approve`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    btn.textContent = 'Approved ✓';
+  } catch (err) {
+    btn.textContent = 'Failed';
+    btn.disabled = false;
+    alert('Could not approve: ' + err.message);
+  }
+}
+
+async function loadJobs() {
+  const res = await fetch('/api/jobs');
+  const jobs = await res.json();
+  const filtered = currentFilter === 'ALL' ? jobs : jobs.filter(j => j.status === currentFilter);
+
+  const tbody = document.getElementById('job-rows');
+  document.getElementById('empty-msg').style.display = filtered.length ? 'none' : 'block';
+
+  tbody.innerHTML = filtered.map(job => {
+    const app = job.applications && job.applications[0];
+    const hasResume = app && app.resumePath;
+    const hasCover = app && app.coverLetterPath;
+    const canApprove = job.status === 'READY';
+
+    return `
+      <tr>
+        <td>
+          <div><a class="link" href="${job.url}" target="_blank" rel="noopener">${job.title}</a></div>
+          <div class="company">${job.company ? job.company.name : ''}</div>
+        </td>
+        <td>${job.score !== null ? `<span class="score ${scoreClass(job.score)}">${job.score}</span>` : '-'}</td>
+        <td><span class="status status-${job.status}">${job.status}</span></td>
+        <td>
+          ${hasResume ? `<a class="link" href="/api/jobs/${job.id}/resume" target="_blank">Resume</a>` : ''}
+          ${hasCover ? `<a class="link" href="/api/jobs/${job.id}/cover-letter" target="_blank">Cover Letter</a>` : ''}
+        </td>
+        <td>
+          ${canApprove
+            ? `<button class="approve" onclick="approve('${job.id}', this)">Approve & Apply</button>`
+            : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+renderFilters();
+loadJobs();
+setInterval(loadJobs, 8000); // auto-refresh every 8s
+</script>
+</body>
+</html>
